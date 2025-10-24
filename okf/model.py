@@ -248,11 +248,13 @@ class OKF(nn.Module):
 
         # Q = Cov[F*x_t - x_{t+1}]
         X1 = torch.cat([torch.tensor(x[:-1]) for x in X], dim=0) # x_t
+        Z1 = torch.cat([torch.tensor(z[:-1]) for z in Z], dim=0) # z_t
         X2 = torch.cat([torch.tensor(x[1:])  for x in X], dim=0) # x_{t+1}
         if self.is_F_fun:
-            F = [self.F(torch.tensor(x), torch.tensor(z)) for x, z in zip(X, Z)]
+            # F = [self.F(torch.tensor(x), torch.tensor(z)) for x, z in zip(X, Z)]
             # Fx1 = np.concatenate([mp(f, torch.tensor(x).T).T.detach().numpy() for x, f in zip(X, F)], axis=0)
-            Fx1 = torch.cat([mp(f, torch.tensor(x).T).T for x, f in zip(X, F)], dim=0)
+            # Fx1 = torch.cat([mp(f, torch.tensor(x).T).T for x, f in zip(X, F)], dim=0)
+            Fx1 = torch.stack([mp(self.F(x, z), x) for x, z in zip(X1, Z1)], dim=0)
         else:
             Fx1 = mp(self.F, X1.T).T  # F*x_t
         Q = torch.tensor(np.cov((Fx1-X2).T.detach().numpy()))

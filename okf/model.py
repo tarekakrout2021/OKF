@@ -31,7 +31,7 @@ from torch import matmul as mp
 from . import utils
 
 class OKF(nn.Module):
-    def __init__(self, dim_x, dim_z, F, H, model_name='OKF', P0=1e3, Q0=1, R0=1, x0=None,
+    def __init__(self, dim_x, dim_z, true_fun, F, H, model_name='OKF', P0=1e3, Q0=1, R0=1, x0=None,
                  init_z2x=None, loss_fun=None, optimize=True, model_files_path='models/'):
         '''
         A model of KF whose parameters (Q,R) are pytorch tensors and can be optimized wrt a loss function.
@@ -43,6 +43,7 @@ class OKF(nn.Module):
 
         :param dim_x: System-state ("hidden-state") dimension [int].
         :param dim_z: Observation (measurement) dimension [int].
+        :param true_fun: The true (non-linear) function for EKF.
         :param F: Process (dynamics) model [pytorch tensor of type double and shape (dim_x,dim_x) OR fun(x, z)
                   that returns such a tensor].
         :param H: Observation (measurement) model [pytorch tensor of type double and shape (dim_z,dim_x) OR fun(x, z)
@@ -74,6 +75,7 @@ class OKF(nn.Module):
         self.optimize = optimize
         self.dim_x = dim_x
         self.dim_z = dim_z
+        self.true_fun = true_fun
 
         self.F = F
         self.H = H
@@ -190,7 +192,7 @@ class OKF(nn.Module):
             return
         F = self.F(self.x, self.z) if self.is_F_fun else self.F
         Q = OKF.get_SPD(self.Q_D, self.Q_L)
-        self.x = mp(F, self.x)
+        self.x = self.true_fun(self.x, self.z)
         self.P = mp(mp(F, self.P), F.T) + Q
 
     def update(self, z):
@@ -254,7 +256,7 @@ class OKF(nn.Module):
             # F = [self.F(torch.tensor(x), torch.tensor(z)) for x, z in zip(X, Z)]
             # Fx1 = np.concatenate([mp(f, torch.tensor(x).T).T.detach().numpy() for x, f in zip(X, F)], axis=0)
             # Fx1 = torch.cat([mp(f, torch.tensor(x).T).T for x, f in zip(X, F)], dim=0)
-            Fx1 = torch.stack([mp(self.F(x, z), x) for x, z in zip(X1, Z1)], dim=0)
+            Fx1 = torch.stack([self.true_fun(x, z) for x, z in zip(X1, Z1)], dim=0)
         else:
             Fx1 = mp(self.F, X1.T).T  # F*x_t
         Q = torch.tensor(np.cov((Fx1-X2).T.detach().numpy()))

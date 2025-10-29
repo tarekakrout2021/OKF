@@ -259,3 +259,47 @@ def compare_quantiles(dd, x, y, hue=None, fac=None, xbins=5, hbins=5, fbins=4, c
     plt.tight_layout()
 
     return axs
+
+def warp_to_pi(yaw: float) -> float:
+    """warp yaw to [-pi, pi)
+
+    Args:
+        yaw (float): raw angle
+
+    Returns:
+        float: raw angle after warping
+    """
+    if yaw is None:
+        return None
+    while yaw >= np.pi:
+        yaw -= 2 * np.pi
+    while yaw < -np.pi:
+        yaw += 2 * np.pi
+    return yaw
+
+
+def warpResYawToPi(res):
+    """warp res yaw to [-pi, pi) in place
+
+    Args:
+        res (np.mat): [measure dim, 1]
+        res infos -> [x, y, z, w, l, h, (vx, vy, optional), ry]
+
+    Returns:
+        np.mat: [measure dim, 1], residual warped to [-pi, pi)
+    """
+    res[-1] = warp_to_pi(res[-1])
+    return res
+
+def warpStateYawToPi(state):
+    """warp state yaw to [-pi, pi) in place
+
+    Args:
+        state (np.mat): [state dim, 1]
+        State vector: [x, y, z, w, l, h, v, a, ry, ry_rate]
+
+    Returns:
+        np.mat: [state dim, 1], state after warping
+    """
+    state[-2] = warp_to_pi(state[-2])
+    return state

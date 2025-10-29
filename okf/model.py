@@ -190,14 +190,18 @@ class OKF(nn.Module):
         if self.x[0] is None:
             # state has not yet been initialized (probably no observation has yet been processed)
             return
+        utils.warpStateYawToPi(self.x)
         F = self.F(self.x, self.z) if self.is_F_fun else self.F
         Q = OKF.get_SPD(self.Q_D, self.Q_L)
-        self.x = self.true_fun(self.x, self.z)
+        self.x = self.true_fun(self.x)
+        utils.warpStateYawToPi(self.x)
         self.P = mp(mp(F, self.P), F.T) + Q
 
     def update(self, z):
         # get observation
         self.z = torch.tensor(z)
+        utils.warpResYawToPi(self.z)
+        utils.warpStateYawToPi(self.x)
         H = self.H(self.x, self.z) if self.is_H_fun else self.H
 
         # get update operators
@@ -215,9 +219,14 @@ class OKF(nn.Module):
 
         # update x
         if self.x[0] is not None:
-            self.x = self.x + mp(K, self.z - mp(H, self.x))
+            res = self.z - mp(H, self.x)
+            utils.warpResYawToPi(res)
+            self.x = self.x + mp(K, res)
+            utils.warpStateYawToPi(self.x)
         else:
+            utils.warpResYawToPi(self.z)
             self.x = self.z2x(self.z)
+            utils.warpStateYawToPi(self.x)
 
     @staticmethod
     def get_SPD(D, L):
@@ -256,10 +265,14 @@ class OKF(nn.Module):
             # F = [self.F(torch.tensor(x), torch.tensor(z)) for x, z in zip(X, Z)]
             # Fx1 = np.concatenate([mp(f, torch.tensor(x).T).T.detach().numpy() for x, f in zip(X, F)], axis=0)
             # Fx1 = torch.cat([mp(f, torch.tensor(x).T).T for x, f in zip(X, F)], dim=0)
-            Fx1 = torch.stack([self.true_fun(x, z) for x, z in zip(X1, Z1)], dim=0)
+            Fx1 = torch.stack([self.true_fun(x) for x in X1], dim=0)
         else:
             Fx1 = mp(self.F, X1.T).T  # F*x_t
-        Q = torch.tensor(np.cov((Fx1-X2).T.detach().numpy()))
+        #todo improve:
+        res = (Fx1-X2)
+        for i in range(res.shape[0]):
+            utils.warpStateYawToPi(res[i])
+        Q = torch.tensor(np.cov(res.T.detach().numpy()))
 
         # R = Cov[z_t - H*x_t]
         Z = np.concatenate(Z, axis=0)
@@ -267,6 +280,8 @@ class OKF(nn.Module):
             if self.is_H_fun else len(X)*[self.H]
         Hx = np.concatenate([mp(h,torch.tensor(x).T).T.detach().numpy() for x,h in zip(X,H)], axis=0)
         delta = Z - Hx
+        for i in range(delta.shape[0]):
+            utils.warpResYawToPi(delta[i])
         R = torch.tensor(np.cov((delta).T))
 
         # Cholesky parameterization

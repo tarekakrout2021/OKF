@@ -1,4 +1,4 @@
-'''
+"""
 This module implements the Optimized Kalman Filter (OKF) class.
 The OKF is similar to any KF implementation, but the parameters are torch variables such that they can be optimized.
 
@@ -17,7 +17,7 @@ The OKF class includes:
 - Methods to observe the model: get_Q(), get_R(), display_params().
 
 Written by Ido Greenberg, 2021
-'''
+"""
 
 import types, warnings
 import numpy as np
@@ -30,10 +30,26 @@ from torch import matmul as mp
 
 from . import utils
 
+
 class OKF(nn.Module):
-    def __init__(self, dim_x, dim_z, true_fun, F, H, model_name='OKF', P0=1e3, Q0=1, R0=1, x0=None,
-                 init_z2x=None, loss_fun=None, optimize=True, model_files_path='models/'):
-        '''
+    def __init__(
+        self,
+        dim_x,
+        dim_z,
+        true_fun,
+        F,
+        H,
+        model_name="OKF",
+        P0=1e3,
+        Q0=1,
+        R0=1,
+        x0=None,
+        init_z2x=None,
+        loss_fun=None,
+        optimize=True,
+        model_files_path="models/",
+    ):
+        """
         A model of KF whose parameters (Q,R) are pytorch tensors and can be optimized wrt a loss function.
 
         Under the KF assumptions, such optimization (wrt the MSE of the model-predictions) is equivalent to simply
@@ -68,7 +84,7 @@ class OKF(nn.Module):
         :param optimize: Whether to tune the parameters Q,R by optimization or using the standard sample covariance
                          matrices of the noise.
         :param model_files_path: Directory path to save the model in [str].
-        '''
+        """
         nn.Module.__init__(self)
         self.model_name = model_name
         self.base_path = model_files_path
@@ -79,8 +95,8 @@ class OKF(nn.Module):
 
         self.F = F
         self.H = H
-        self.is_H_fun = isinstance(self.H, types.FunctionType)
-        self.is_F_fun = isinstance(self.F, types.FunctionType)
+        self.is_H_fun = callable(self.H)
+        self.is_F_fun = callable(self.true_fun)
 
         if x0 is None:
             x0 = self.dim_x * [None]
@@ -100,9 +116,11 @@ class OKF(nn.Module):
         if init_z2x is None:
             if self.dim_x != self.dim_z:
                 if x0[0] is None:
-                    warnings.warn('No state initialization was provided (init_z2x). Could not initialize '
-                                  'x=z either, since dim_x!=dim_z. Instead, x will be initialized to the '
-                                  '0-array. Note that this is often highly sub-optimal. which is not recommended.')
+                    warnings.warn(
+                        "No state initialization was provided (init_z2x). Could not initialize "
+                        "x=z either, since dim_x!=dim_z. Instead, x will be initialized to the "
+                        "0-array. Note that this is often highly sub-optimal. which is not recommended."
+                    )
                 self.z2x = lambda z: torch.zeros(self.dim_x, dtype=torch.double)
             else:
                 self.z2x = lambda z: z
@@ -111,13 +129,17 @@ class OKF(nn.Module):
 
         self.loss_fun = loss_fun
         if self.loss_fun is None:
-            self.loss_fun = lambda pred,x: ((pred-x)**2).sum()
+            self.loss_fun = lambda pred, x: ((pred - x) ** 2).sum()
 
         # verify dimensions
         if len(self.x0) != self.dim_x:
-            raise ValueError(f'Bad input dimension: len(x0) = {len(self.x0)} != {self.dim_x}.')
+            raise ValueError(
+                f"Bad input dimension: len(x0) = {len(self.x0)} != {self.dim_x}."
+            )
         if self.P0.shape != (self.dim_x, self.dim_x):
-            raise ValueError(f'Bad input dimension: P0.shape = {self.P0.shape} != {(self.dim_x, self.dim_x)}.')
+            raise ValueError(
+                f"Bad input dimension: P0.shape = {self.P0.shape} != {(self.dim_x, self.dim_x)}."
+            )
 
         self.x = None
         self.z = None
@@ -125,13 +147,13 @@ class OKF(nn.Module):
         self.init_state()
 
     def init_state(self):
-        '''Initialize the estimate (x,P) and the observation (z) before a new sequence of observations (trajectory).'''
+        """Initialize the estimate (x,P) and the observation (z) before a new sequence of observations (trajectory)."""
         self.x = self.x0
         self.z = self.dim_z * [None]
         self.P = self.P0
 
     def reset_model(self):
-        '''Reset the model parameters (Q,R).'''
+        """Reset the model parameters (Q,R)."""
         # Q
         if isinstance(self.Q0, torch.Tensor) and len(self.Q0.shape):
             # given as a 2D tensor
@@ -139,7 +161,11 @@ class OKF(nn.Module):
         else:
             # given as a scale for randomization
             Q_D = (self.Q0 * (0.5 + torch.rand(self.dim_x, dtype=torch.double))).log()
-            Q_L = self.Q0/5 * torch.randn(self.dim_x * (self.dim_x-1) // 2, dtype=torch.double)
+            Q_L = (
+                self.Q0
+                / 5
+                * torch.randn(self.dim_x * (self.dim_x - 1) // 2, dtype=torch.double)
+            )
         # R
         if isinstance(self.R0, torch.Tensor) and len(self.R0.shape):
             # given as a 2D tensor
@@ -147,7 +173,11 @@ class OKF(nn.Module):
         else:
             # given as a scale for randomization
             R_D = (self.R0 * (0.5 + torch.rand(self.dim_z, dtype=torch.double))).log()
-            R_L = self.R0/5 * torch.randn(self.dim_z * (self.dim_z-1) // 2, dtype=torch.double)
+            R_L = (
+                self.R0
+                / 5
+                * torch.randn(self.dim_z * (self.dim_z - 1) // 2, dtype=torch.double)
+            )
 
         if self.optimize:
             self.Q_D = nn.Parameter(Q_D, requires_grad=True)
@@ -176,14 +206,19 @@ class OKF(nn.Module):
             self.Q_D, self.Q_L, self.R_D, self.R_L = torch.load(fpath)
 
     def get_model_path(self, fname=None, base_path=None, assert_suffices=True):
-        if base_path is None: base_path = self.base_path
-        if fname is None: fname = self.model_name
+        if base_path is None:
+            base_path = self.base_path
+        if fname is None:
+            fname = self.model_name
         if assert_suffices:
-            if base_path[-1] != '/': base_path += '/'
+            if base_path[-1] != "/":
+                base_path += "/"
             if self.optimize:
-                if not fname.endswith('.m'): fname += '.m'
+                if not fname.endswith(".m"):
+                    fname += ".m"
             else:
-                if not fname.endswith('.noise'): fname += '.noise'
+                if not fname.endswith(".noise"):
+                    fname += ".noise"
         return base_path + fname
 
     def predict(self):
@@ -191,7 +226,7 @@ class OKF(nn.Module):
             # state has not yet been initialized (probably no observation has yet been processed)
             return
         utils.warpStateYawToPi(self.x)
-        F = self.F(self.x, self.z) if self.is_F_fun else self.F
+        F = self.F(self.x) if self.is_F_fun else self.F
         Q = OKF.get_SPD(self.Q_D, self.Q_L)
         self.x = self.true_fun(self.x)
         utils.warpStateYawToPi(self.x)
@@ -200,10 +235,16 @@ class OKF(nn.Module):
     def update(self, z):
         # get observation
         self.z = torch.tensor(z)
-        utils.warpResYawToPi(self.z)
+        # utils.warpResYawToPi(self.z)
         utils.warpStateYawToPi(self.x)
-        H = self.H(self.x, self.z) if self.is_H_fun else self.H
-
+        is_x_none = False
+        for x in self.x:
+            if x is None:
+                is_x_none = True
+        if is_x_none:
+            H = self.H(torch.tensor([0.0] * len(self.x))) if self.is_H_fun else self.H
+        else:
+            H = self.H(self.x) if self.is_H_fun else self.H
         # get update operators
         R = OKF.get_SPD(self.R_D, self.R_L)
         Ht = H.T
@@ -213,8 +254,10 @@ class OKF(nn.Module):
 
         # update P
         I_KH = torch.eye(self.P.shape[0]) - mp(K, H)
-        self.P = mp(mp(I_KH, self.P), I_KH.T) + mp(mp(K, R), K.T)  # equivalent to the standart formula
-                                                                   # but more numerically-stable
+        self.P = mp(mp(I_KH, self.P), I_KH.T) + mp(
+            mp(K, R), K.T
+        )  # equivalent to the standart formula
+        # but more numerically-stable
         self.P = 0.5 * (self.P + self.P.T)  # force P to be symmetric
 
         # update x
@@ -224,43 +267,43 @@ class OKF(nn.Module):
             self.x = self.x + mp(K, res)
             utils.warpStateYawToPi(self.x)
         else:
-            utils.warpResYawToPi(self.z)
+            # utils.warpResYawToPi(self.z)
             self.x = self.z2x(self.z)
             utils.warpStateYawToPi(self.x)
 
     @staticmethod
     def get_SPD(D, L):
-        '''Convert log-diagonal entries [n] and below [n*(n-1)/2] into a SPD matrix [n^2].'''
+        """Convert log-diagonal entries [n] and below [n*(n-1)/2] into a SPD matrix [n^2]."""
         n = len(D)
-        A = D.exp().diag() # fill diagonal
+        A = D.exp().diag()  # fill diagonal
         ids = torch.tril_indices(n, n, -1)
-        A[ids[0, :], ids[1, :]] = L # fill below-diagonal
+        A[ids[0, :], ids[1, :]] = L  # fill below-diagonal
         return mp(A, A.T)
 
     @staticmethod
     def encode_SPD(A, eps=1e-6):
-        '''Apply Cholesky decomposition to A and return the log-diagonal entires [n] and below [n*(n-1)/2].'''
+        """Apply Cholesky decomposition to A and return the log-diagonal entires [n] and below [n*(n-1)/2]."""
         n = A.shape[0]
-        A = torch.linalg.cholesky(A+eps*torch.eye(n))
+        A = torch.linalg.cholesky(A + eps * torch.eye(n))
         D = A.diag()
         D = D.log()
-        ids = torch.tril_indices(n,n,-1)
-        L = A[ids[0,:],ids[1,:]]
+        ids = torch.tril_indices(n, n, -1)
+        L = A[ids[0, :], ids[1, :]]
         return D, L
 
     def estimate_noise(self, X, Z):
-        '''
+        """
         Tune the KF by noise estimation:
         Set the parameters Q,R to be the sample covariance matrices of the noise in the given data.
 
         :param X: a list of targets states. X[i] = numpy array of type double and shape (n_time_steps(i), dim_x).
         :param Z: a list of targets observations. Z[i] = numpy array of type double and shape (n_time_steps(i), dim_z).
-        '''
+        """
 
         # Q = Cov[F*x_t - x_{t+1}]
-        X1 = torch.cat([torch.tensor(x[:-1]) for x in X], dim=0) # x_t
-        Z1 = torch.cat([torch.tensor(z[:-1]) for z in Z], dim=0) # z_t
-        X2 = torch.cat([torch.tensor(x[1:])  for x in X], dim=0) # x_{t+1}
+        X1 = torch.cat([torch.tensor(x[:-1]) for x in X], dim=0)  # x_t
+        # Z1 = torch.cat([torch.tensor(z[:-1]) for z in Z], dim=0)  # z_t
+        X2 = torch.cat([torch.tensor(x[1:]) for x in X], dim=0)  # x_{t+1}
         if self.is_F_fun:
             # F = [self.F(torch.tensor(x), torch.tensor(z)) for x, z in zip(X, Z)]
             # Fx1 = np.concatenate([mp(f, torch.tensor(x).T).T.detach().numpy() for x, f in zip(X, F)], axis=0)
@@ -268,17 +311,29 @@ class OKF(nn.Module):
             Fx1 = torch.stack([self.true_fun(x) for x in X1], dim=0)
         else:
             Fx1 = mp(self.F, X1.T).T  # F*x_t
-        #todo improve:
-        res = (Fx1-X2)
+        # todo improve:
+        res = Fx1 - X2
         for i in range(res.shape[0]):
             utils.warpStateYawToPi(res[i])
         Q = torch.tensor(np.cov(res.T.detach().numpy()))
 
         # R = Cov[z_t - H*x_t]
+        H = []
         Z = np.concatenate(Z, axis=0)
-        H = [self.H(torch.tensor(x), torch.tensor(z)) for x,z in zip(X,Z)] \
-            if self.is_H_fun else len(X)*[self.H]
-        Hx = np.concatenate([mp(h,torch.tensor(x).T).T.detach().numpy() for x,h in zip(X,H)], axis=0)
+        if self.is_H_fun:
+            for x in X:
+                for x_t in x:
+                    H.append(self.H(torch.tensor(x_t)))
+            # H is a list of tensors
+        else:
+            H = len(X) * [self.H]
+
+        Hx = np.concatenate(
+            [mp(h, torch.tensor(x).T).T.detach().numpy() for x, h in zip(X, H)], axis=0
+        )
+        # X3 = torch.cat([torch.tensor(x) for x in X], dim=0)
+        # Hx = torch.stack([self.H(x) for x in X3], dim=0)
+
         delta = Z - Hx
         for i in range(delta.shape[0]):
             utils.warpResYawToPi(delta[i])
@@ -299,21 +354,29 @@ class OKF(nn.Module):
 
     def get_Q(self, to_numpy=True):
         A = OKF.get_SPD(self.Q_D, self.Q_L)
-        if to_numpy: A = A.detach().numpy()
+        if to_numpy:
+            A = A.detach().numpy()
         return A
 
     def get_R(self, to_numpy=True):
         A = OKF.get_SPD(self.R_D, self.R_L)
-        if to_numpy: A = A.detach().numpy()
+        if to_numpy:
+            A = A.detach().numpy()
         return A
 
     def display_params(self, n_digits=0, fontsize=15, axsize=(4.5, 3.5)):
         axs = utils.Axes(2, 2, axsize=axsize)
-        for i,A in enumerate([self.get_Q(), self.get_R()]):
-            h = sns.heatmap(A, annot=True, fmt=f'.{n_digits:d}f', cmap="Reds", ax=axs[i],
-                            annot_kws=None if fontsize is None else dict(size=fontsize))
+        for i, A in enumerate([self.get_Q(), self.get_R()]):
+            h = sns.heatmap(
+                A,
+                annot=True,
+                fmt=f".{n_digits:d}f",
+                cmap="Reds",
+                ax=axs[i],
+                annot_kws=None if fontsize is None else dict(size=fontsize),
+            )
             h.xaxis.set_ticks_position("top")
-        axs.labs(0, title=f'[{self.model_name}] Q', fontsize=fontsize+2)
-        axs.labs(1, title=f'[{self.model_name}] R', fontsize=fontsize+2)
+        axs.labs(0, title=f"[{self.model_name}] Q", fontsize=fontsize + 2)
+        axs.labs(1, title=f"[{self.model_name}] R", fontsize=fontsize + 2)
         plt.tight_layout()
         return axs

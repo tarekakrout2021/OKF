@@ -311,7 +311,6 @@ class OKF(nn.Module):
             Fx1 = torch.stack([self.true_fun(x) for x in X1], dim=0)
         else:
             Fx1 = mp(self.F, X1.T).T  # F*x_t
-        # todo improve:
         res = Fx1 - X2
         for i in range(res.shape[0]):
             utils.warpStateYawToPi(res[i])

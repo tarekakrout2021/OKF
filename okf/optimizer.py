@@ -456,7 +456,9 @@ def analyze_test_results(res, save_path):
     axs[a].set_xticklabels(axs[a].get_xticklabels(), fontsize=16)
     a += 1
 
-    sns.barplot(data=res, x="model", y="SE", capsize=0.07, errorbar=('ci', 99), ax=axs[a])
+    sns.barplot(
+        data=res, x="model", y="SE", capsize=0.07, errorbar=("ci", 99), ax=axs[a]
+    )
     axs.labs(a, "model", "error^2 (99% confidence)", fontsize=16)
     a += 1
 
@@ -515,7 +517,7 @@ def analyze_test_results(res, save_path):
     a += 1
 
     plt.tight_layout()
-    plt.savefig(f"{save_path}", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{save_path}", dpi=300, bbox_inches="tight")
 
     plt.close()
 
@@ -526,6 +528,7 @@ def display_tracking(
     models,
     X,
     Y,
+    save_path,
     n=4,
     t_min=0,
     xdim=0,
@@ -576,7 +579,7 @@ def display_tracking(
         ax.legend(fontsize=14)
 
     plt.tight_layout()
-    plt.savefig(f"tracking.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{save_path}", dpi=300, bbox_inches="tight")
 
     plt.close()
 

@@ -422,7 +422,7 @@ def test_model(
 ###################   ANALYSIS   ###################
 
 
-def analyze_test_results(res):
+def analyze_test_results(res, save_path):
     models = np.unique(res.model)
     axs = utils.Axes(6, 4, axsize=(5, 3.8))
     a = 0
@@ -456,7 +456,7 @@ def analyze_test_results(res):
     axs[a].set_xticklabels(axs[a].get_xticklabels(), fontsize=16)
     a += 1
 
-    sns.barplot(data=res, x="model", y="SE", capsize=0.07, ci=99, ax=axs[a])
+    sns.barplot(data=res, x="model", y="SE", capsize=0.07, errorbar=('ci', 99), ax=axs[a])
     axs.labs(a, "model", "error^2 (99% confidence)", fontsize=16)
     a += 1
 
@@ -515,6 +515,10 @@ def analyze_test_results(res):
     a += 1
 
     plt.tight_layout()
+    plt.savefig(f"{save_path}", dpi=300, bbox_inches='tight')
+
+    plt.close()
+
     return axs
 
 
@@ -572,4 +576,8 @@ def display_tracking(
         ax.legend(fontsize=14)
 
     plt.tight_layout()
+    plt.savefig(f"tracking.png", dpi=300, bbox_inches='tight')
+
+    plt.close()
+
     return axs

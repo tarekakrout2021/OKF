@@ -124,6 +124,8 @@ class OKF(nn.Module):
         self.P = None
         self.init_state()
 
+        self.K_history = []  # stores Kalman Gain
+
     def init_state(self):
         """Initialize the estimate (x,P) and the observation (z) before a new sequence of observations (trajectory)."""
         self.x = self.x0
@@ -229,6 +231,8 @@ class OKF(nn.Module):
         PHt = mp(self.P, Ht)
         self.S = mp(H, PHt) + R
         K = mp(PHt, self.S.inverse())
+
+        self.K_history.append(K.detach().cpu().numpy())
 
         # update P
         I_KH = torch.eye(self.P.shape[0]) - mp(K, H)

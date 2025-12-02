@@ -146,6 +146,7 @@ def train(
 
         # train
         T0 = time()
+        K_epoch_stats = [] # Kalman gain after each batch
         for e in range(n_epochs):
             t0 = time()
 
@@ -181,10 +182,27 @@ def train(
                     losses_valid.append(loss_batch)
                     RMSE_valid.append(np.sqrt(loss_batch))
 
+                    if len(model.K_history) > 0:
+                        Ks = np.stack(model.K_history, axis=0)  # shape: (n_steps, dim_x, dim_z)
+                        # examples of summaries:
+                        K_frob_mean = np.linalg.norm(Ks.reshape(Ks.shape[0], -1), axis=1).mean()
+                        K_diag_mean = Ks[:, np.arange(model.dim_x), np.arange(model.dim_z)].mean() \
+                            if model.dim_x == model.dim_z else np.nan
+
+                        K_epoch_stats.append(dict(
+                            epoch=e,
+                            K_frob_mean=K_frob_mean,
+                            K_diag_mean=K_diag_mean,
+                        ))
+                    else:
+                        K_epoch_stats.append(dict(epoch=e, K_frob_mean=np.nan, K_diag_mean=np.nan))
+                    # init the KF Gain list
+                    model.K_history = []
+
                     if verbose >= 2:
                         print(
                             f"\t[{model.model_name:s}] {e + 1:02d}.{b + 1:04d}/{n_epochs:02d}.{n_batches:04d}:\t"
-                            + f"train_RMSE={RMSE[-1]:.2f}, valid_RMSE={RMSE_valid[-1]:.2f}   |   {time() - t0:.0f} [s]"
+                            + f"train_RMSE={RMSE[-1]:.2f}, valid_RMSE={RMSE_valid[-1]:.2f}, KF Gain = {K_epoch_stats[-1]['K_frob_mean']}  |   {time() - t0:.0f} [s]"
                         )
 
                     if (

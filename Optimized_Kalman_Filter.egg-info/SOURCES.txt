@@ -8,6 +8,7 @@ Optimized_Kalman_Filter.egg-info/requires.txt
 Optimized_Kalman_Filter.egg-info/top_level.txt
 okf/__init__.py
 okf/model.py
+okf/motion_models.py
 okf/optimizer.py
 okf/utils.py
 okf/example/__init__.py

@@ -29,23 +29,18 @@ import torch.nn as nn
 from torch import matmul as mp
 
 from . import utils
+from .motion_models import EKFMotionModel
 
 
 class OKF(nn.Module):
     def __init__(
         self,
-        dim_x,
-        dim_z,
-        true_fun,
-        F,
-        H,
+        motion_model: EKFMotionModel,
         model_name="OKF",
-        P0=1e3,
+        # P0=1e3,
         Q0=1,
         R0=1,
         x0=None,
-        init_z2x=None,
-        loss_fun=None,
         optimize=True,
         model_files_path="models/",
     ):
@@ -57,13 +52,7 @@ class OKF(nn.Module):
         do not usually hold in practical problems - which is sometimes goes unnoticed. Optimization can obtain better
         accuracy in such cases.
 
-        :param dim_x: System-state ("hidden-state") dimension [int].
-        :param dim_z: Observation (measurement) dimension [int].
-        :param true_fun: The true (non-linear) function for EKF.
-        :param F: Process (dynamics) model [pytorch tensor of type double and shape (dim_x,dim_x) OR fun(x, z)
-                  that returns such a tensor].
-        :param H: Observation (measurement) model [pytorch tensor of type double and shape (dim_z,dim_x) OR fun(x, z)
-                  that returns such a tensor].
+        :param motion_model: e.g CTRA, Bicycle.
         :param model_name: Model name [str].
         :param P0: The initial value of the uncertainty matrix P, used to initialize P every new trajectory. If scalar,
                    the initial P is P0*eye(dim_x) [numeric OR pytorch tensor with type double and shape (dim_x,dim_x);
@@ -89,14 +78,16 @@ class OKF(nn.Module):
         self.model_name = model_name
         self.base_path = model_files_path
         self.optimize = optimize
-        self.dim_x = dim_x
-        self.dim_z = dim_z
-        self.true_fun = true_fun
+        self.motion_model = motion_model
+        self.dim_x = motion_model.x_dim()
+        self.dim_z = motion_model.z_dim()
+        self.true_fun = motion_model.f
 
-        self.F = F
-        self.H = H
+        self.F = motion_model.jacobian_of_f
+        self.H = motion_model.jacobian_of_h
         self.is_H_fun = callable(self.H)
         self.is_F_fun = callable(self.true_fun)
+        self.state_to_measure = motion_model.h
 
         if x0 is None:
             x0 = self.dim_x * [None]
@@ -104,30 +95,17 @@ class OKF(nn.Module):
             x0 = x0 * torch.ones(self.dim_x, dtype=torch.double)
         self.x0 = x0
 
-        if not torch.is_tensor(P0):
-            P0 = P0 * torch.eye(self.dim_x, dtype=torch.double)
-        self.P0 = P0
+        # if not torch.is_tensor(P0):
+        #     P0 = P0 * torch.eye(self.dim_x, dtype=torch.double)
+        self.P0 = motion_model.initial_p()
         self.Q0 = Q0
         self.R0 = R0
         self.Q_D, self.Q_L, self.R_D, self.R_L = 4 * [None]
         self.reset_model()
 
-        self.z2x = init_z2x
-        if init_z2x is None:
-            if self.dim_x != self.dim_z:
-                if x0[0] is None:
-                    warnings.warn(
-                        "No state initialization was provided (init_z2x). Could not initialize "
-                        "x=z either, since dim_x!=dim_z. Instead, x will be initialized to the "
-                        "0-array. Note that this is often highly sub-optimal. which is not recommended."
-                    )
-                self.z2x = lambda z: torch.zeros(self.dim_x, dtype=torch.double)
-            else:
-                self.z2x = lambda z: z
-        elif not callable(self.z2x):
-            self.z2x = lambda z: torch.tensor(init_z2x, dtype=torch.double)
+        self.z2x = motion_model.initial_observation_to_state
 
-        self.loss_fun = loss_fun
+        self.loss_fun = motion_model.loss_fun()
         if self.loss_fun is None:
             self.loss_fun = lambda pred, x: ((pred - x) ** 2).sum()
 
@@ -262,7 +240,7 @@ class OKF(nn.Module):
 
         # update x
         if self.x[0] is not None:
-            res = self.z - mp(H, self.x)
+            res = self.z - self.state_to_measure(self.x)
             utils.warpResYawToPi(res)
             self.x = self.x + mp(K, res)
             utils.warpStateYawToPi(self.x)
@@ -302,18 +280,16 @@ class OKF(nn.Module):
 
         # Q = Cov[F*x_t - x_{t+1}]
         X1 = torch.cat([torch.tensor(x[:-1]) for x in X], dim=0)  # x_t
-        # Z1 = torch.cat([torch.tensor(z[:-1]) for z in Z], dim=0)  # z_t
         X2 = torch.cat([torch.tensor(x[1:]) for x in X], dim=0)  # x_{t+1}
         if self.is_F_fun:
-            # F = [self.F(torch.tensor(x), torch.tensor(z)) for x, z in zip(X, Z)]
-            # Fx1 = np.concatenate([mp(f, torch.tensor(x).T).T.detach().numpy() for x, f in zip(X, F)], axis=0)
-            # Fx1 = torch.cat([mp(f, torch.tensor(x).T).T for x, f in zip(X, F)], dim=0)
             Fx1 = torch.stack([self.true_fun(x) for x in X1], dim=0)
         else:
-            Fx1 = mp(self.F, X1.T).T  # F*x_t
+            Fx1 = mp(self.F, X1.T).T  # F*x_t # TODO: linear case
         res = Fx1 - X2
         for i in range(res.shape[0]):
             utils.warpStateYawToPi(res[i])
+
+        # Q = Cov[F*x_t - x_{t+1}]
         Q = torch.tensor(np.cov(res.T.detach().numpy()))
 
         # R = Cov[z_t - H*x_t]

@@ -45,7 +45,7 @@ def train(
     p_valid=0.15,
     n_epochs=1,
     batch_size=10,
-    lr=1e-2,
+    lr=3e-4,
     lr_decay=0.5,
     lr_decay_freq=150,
     optimizer=optim.Adam,

@@ -557,7 +557,7 @@ def display_tracking(
     axs = utils.Axes(n, 4, axsize=(5, 4))
     colors = ["r", "b", "g", "y"]
     preds = {}
-    for i in range(n):
+    for i in range(min(n,len(X))):
         ax = axs[i]
         preds[i] = []
         XX = X[i]

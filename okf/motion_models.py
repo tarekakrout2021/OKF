@@ -505,19 +505,38 @@ class Bicycle(EKFMotionModel):
         return torch.tensor(meas_state)
 
     def get_bic_beta(self, length: float, sigma: float) -> Tuple[float, float, float]:
-        """get the angle between the object velocity and the
-        X-axis of the coordinate system
+        """get the angle between the object velocity and the X-axis of the coordinate system
 
         Args:
             length (float): object length
             sigma (float): the steering angle, radians
 
         Returns:
-            float: the angle between the object velocity and X-axis, radians
+            beta (float): the angle between the object velocity and X-axis, radians
+            lf (float): distance from CG to front axle
+            lr (float): distance from CG to rear axle
         """
 
-        lf, lr = length * self.w_r * self.lf_r, length * self.w_r * (1 - self.lf_r)
-        beta = np.arctan(lr / (lr + lf) * np.tan(sigma))
+        # distances still depend on length
+        lf = float(length) * self.w_r * self.lf_r
+        lr = float(length) * self.w_r * (1.0 - self.lf_r)
+
+        # geometric ratio lr / (lr + lf) simplifies to (1 - lf_r)
+        k = 1.0 - self.lf_r  # independent of length and w_r
+
+        # handle bad / extreme sigma
+        if not np.isfinite(sigma):
+            beta = 0.0
+        else:
+            # wrap sigma into [-pi, pi]
+            sigma_wrapped = (float(sigma) + np.pi) % (2.0 * np.pi) - np.pi
+
+            # clamp to avoid tan() blowing up exactly at ±pi/2
+            max_steer = np.deg2rad(89.0)  # physically also reasonable
+            sigma_limited = np.clip(sigma_wrapped, -max_steer, max_steer)
+
+            beta = float(np.arctan(k * np.tan(sigma_limited)))
+
         return beta, lf, lr
 
     def gra_to_geo_dist(self, length: float) -> float:
@@ -531,14 +550,73 @@ class Bicycle(EKFMotionModel):
         """
         return length * self.w_r * (0.5 - self.lf_r)
 
-    def initial_observation_to_state(self, obs_vec):  # TODO
+    def initial_observation_to_state(self, obs_vec):
+        """
+        Map first measurement (geometric center) to Bicycle state (gravity center).
+
+        obs_vec (has_velo=True):
+            [x_geo, y_geo, z, w, l, h, vx, vy, yaw]
+
+        obs_vec (has_velo=False):
+            [x_geo, y_geo, z, w, l, h, yaw]
+
+        state:
+            [x_gra, y_gra, z, w, l, h, v, a, theta, sigma]
+        """
         if self.has_velo:
-            x, y, z, w, l, h, vx, vy, yaw = obs_vec
-            v = torch.sqrt(vx**2 + vy**2)
-            return torch.tensor([x, y, z, w, l, h, v, 0, yaw, 0])
+            x_geo, y_geo, z, w, l, h, vx, vy, yaw = obs_vec
+
+            # --- heading / speed from obs ---
+            theta = float(yaw)
+            v = float(np.hypot(vx, vy))
+
+            # --- geo -> gra (invert h()) ---
+            # In h(): x_geo = x_gra - d * cos(theta), so x_gra = x_geo + d * cos(theta)
+            geo2gra_dist = self.gra_to_geo_dist(float(l))
+            x_gra = float(x_geo) + geo2gra_dist * np.cos(theta)
+            y_gra = float(y_geo) + geo2gra_dist * np.sin(theta)
+
+            # --- estimate steering angle sigma from velocity direction ---
+            # velocity direction in world frame
+            if v > 1e-3:
+                vel_dir = float(np.arctan2(vy, vx))  # direction of (vx, vy)
+
+                # slip angle beta = vel_dir - theta (wrap to [-pi, pi])
+                beta = vel_dir - theta
+                beta = (beta + np.pi) % (2 * np.pi) - np.pi
+
+                # bicycle geometry
+                lf = float(l) * self.w_r * self.lf_r
+                lr = float(l) * self.w_r * (1.0 - self.lf_r)
+                k = lr / (lr + lf + 1e-8)
+
+                # from get_bic_beta: tan(beta) = k * tan(sigma)  =>  sigma = atan( tan(beta) / k )
+                sigma = float(np.arctan(np.tan(beta) / (k + 1e-8)))
+            else:
+                # If no meaningful velocity, just start straight
+                sigma = 0.0
+
+            a = 0.0  # no info about acceleration from a single obs
+
+            return torch.tensor(
+                [x_gra, y_gra, float(z), float(w), float(l), float(h),
+                 v, a, theta, sigma],
+                dtype=torch.float32,
+            )
         else:
-            x, y, z, w, l, h, yaw = obs_vec
-            return torch.tensor([x, y, z, w, l, h, 0, 0, yaw, 0])
+            # No velocity: we can only set position, size, heading and assume v=a=sigma=0
+            x_geo, y_geo, z, w, l, h, yaw = obs_vec
+            theta = float(yaw)
+
+            geo2gra_dist = self.gra_to_geo_dist(float(l))
+            x_gra = float(x_geo) + geo2gra_dist * np.cos(theta)
+            y_gra = float(y_geo) + geo2gra_dist * np.sin(theta)
+
+            return torch.tensor(
+                [x_gra, y_gra, float(z), float(w), float(l), float(h),
+                 0.0, 0.0, theta, 0.0],
+                dtype=torch.float32,
+            )
 
     @staticmethod
     def loss_fun():

@@ -29,7 +29,7 @@ import torch.nn as nn
 from torch import matmul as mp
 
 from . import utils
-from .motion_models import EKFMotionModel
+from .motion_models import EKFMotionModel, CTRA
 
 
 class OKF(nn.Module):
@@ -37,7 +37,7 @@ class OKF(nn.Module):
         self,
         motion_model: EKFMotionModel,
         model_name="OKF",
-        # P0=1e3,
+        P0=1e3,
         Q0=1,
         R0=1,
         x0=None,
@@ -97,7 +97,7 @@ class OKF(nn.Module):
 
         # if not torch.is_tensor(P0):
         #     P0 = P0 * torch.eye(self.dim_x, dtype=torch.double)
-        self.P0 = motion_model.initial_p()
+        self.P0 = motion_model.initial_p() if self.motion_model is CTRA else P0 * torch.eye(self.dim_x, dtype=torch.double)
         self.Q0 = Q0
         self.R0 = R0
         self.Q_D, self.Q_L, self.R_D, self.R_L = 4 * [None]
@@ -205,7 +205,6 @@ class OKF(nn.Module):
         if self.x[0] is None:
             # state has not yet been initialized (probably no observation has yet been processed)
             return
-        utils.warpStateYawToPi(self.x)
         F = self.F(self.x) if self.is_F_fun else self.F
         Q = OKF.get_SPD(self.Q_D, self.Q_L)
         self.x = self.true_fun(self.x)
@@ -215,8 +214,6 @@ class OKF(nn.Module):
     def update(self, z):
         # get observation
         self.z = torch.tensor(z)
-        # utils.warpResYawToPi(self.z)
-        utils.warpStateYawToPi(self.x)
         is_x_none = False
         for x in self.x:
             if x is None:

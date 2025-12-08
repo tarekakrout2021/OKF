@@ -146,7 +146,7 @@ def train(
 
         # train
         T0 = time()
-        K_epoch_stats = [] # Kalman gain after each batch
+        K_epoch_stats = []  # Kalman gain after each batch
         for e in range(n_epochs):
             t0 = time()
 
@@ -183,19 +183,30 @@ def train(
                     RMSE_valid.append(np.sqrt(loss_batch))
 
                     if len(model.K_history) > 0:
-                        Ks = np.stack(model.K_history, axis=0)  # shape: (n_steps, dim_x, dim_z)
+                        Ks = np.stack(
+                            model.K_history, axis=0
+                        )  # shape: (n_steps, dim_x, dim_z)
                         # examples of summaries:
-                        K_frob_mean = np.linalg.norm(Ks.reshape(Ks.shape[0], -1), axis=1).mean()
-                        K_diag_mean = Ks[:, np.arange(model.dim_x), np.arange(model.dim_z)].mean() \
-                            if model.dim_x == model.dim_z else np.nan
+                        K_frob_mean = np.linalg.norm(
+                            Ks.reshape(Ks.shape[0], -1), axis=1
+                        ).mean()
+                        K_diag_mean = (
+                            Ks[:, np.arange(model.dim_x), np.arange(model.dim_z)].mean()
+                            if model.dim_x == model.dim_z
+                            else np.nan
+                        )
 
-                        K_epoch_stats.append(dict(
-                            epoch=e,
-                            K_frob_mean=K_frob_mean,
-                            K_diag_mean=K_diag_mean,
-                        ))
+                        K_epoch_stats.append(
+                            dict(
+                                epoch=e,
+                                K_frob_mean=K_frob_mean,
+                                K_diag_mean=K_diag_mean,
+                            )
+                        )
                     else:
-                        K_epoch_stats.append(dict(epoch=e, K_frob_mean=np.nan, K_diag_mean=np.nan))
+                        K_epoch_stats.append(
+                            dict(epoch=e, K_frob_mean=np.nan, K_diag_mean=np.nan)
+                        )
                     # init the KF Gain list
                     model.K_history = []
 
@@ -557,7 +568,7 @@ def display_tracking(
     axs = utils.Axes(n, 4, axsize=(5, 4))
     colors = ["r", "b", "g", "y"]
     preds = {}
-    for i in range(min(n,len(X))):
+    for i in range(min(n, len(X))):
         ax = axs[i]
         preds[i] = []
         XX = X[i]

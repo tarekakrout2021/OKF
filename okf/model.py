@@ -97,7 +97,11 @@ class OKF(nn.Module):
 
         # if not torch.is_tensor(P0):
         #     P0 = P0 * torch.eye(self.dim_x, dtype=torch.double)
-        self.P0 = motion_model.initial_p() if self.motion_model is CTRA else P0 * torch.eye(self.dim_x, dtype=torch.double)
+        self.P0 = (
+            motion_model.initial_p()
+            if self.motion_model is CTRA
+            else P0 * torch.eye(self.dim_x, dtype=torch.double)
+        )
         self.Q0 = Q0
         self.R0 = R0
         self.Q_D, self.Q_L, self.R_D, self.R_L = 4 * [None]

@@ -34,7 +34,7 @@ class EKFMotionModel(ABC):
         pass
 
     @staticmethod
-    def initial_p()->torch.Tensor:
+    def initial_p() -> torch.Tensor:
         pass
 
     @staticmethod
@@ -270,8 +270,10 @@ class CTRA(EKFMotionModel):
             return torch.tensor([x, y, z, w, l, h, 0, 0, yaw, 0])
 
     @staticmethod
-    def initial_p()->torch.Tensor:
-        return torch.diag(torch.tensor([4, 4, 4, 4, 4, 4, 1000, 4, 1, 0.1], dtype=torch.float64))
+    def initial_p() -> torch.Tensor:
+        return torch.diag(
+            torch.tensor([4, 4, 4, 4, 4, 4, 1000, 4, 1, 0.1], dtype=torch.float64)
+        )
 
     @staticmethod
     def loss_fun():
@@ -599,8 +601,18 @@ class Bicycle(EKFMotionModel):
             a = 0.0  # no info about acceleration from a single obs
 
             return torch.tensor(
-                [x_gra, y_gra, float(z), float(w), float(l), float(h),
-                 v, a, theta, sigma],
+                [
+                    x_gra,
+                    y_gra,
+                    float(z),
+                    float(w),
+                    float(l),
+                    float(h),
+                    v,
+                    a,
+                    theta,
+                    sigma,
+                ],
                 dtype=torch.float32,
             )
         else:
@@ -613,8 +625,18 @@ class Bicycle(EKFMotionModel):
             y_gra = float(y_geo) + geo2gra_dist * np.sin(theta)
 
             return torch.tensor(
-                [x_gra, y_gra, float(z), float(w), float(l), float(h),
-                 0.0, 0.0, theta, 0.0],
+                [
+                    x_gra,
+                    y_gra,
+                    float(z),
+                    float(w),
+                    float(l),
+                    float(h),
+                    0.0,
+                    0.0,
+                    theta,
+                    0.0,
+                ],
                 dtype=torch.float32,
             )
 

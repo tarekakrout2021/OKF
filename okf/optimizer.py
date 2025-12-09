@@ -41,6 +41,7 @@ def train(
     model,
     X,
     Y,
+    R,
     split_data=None,
     p_valid=0.15,
     n_epochs=1,
@@ -70,6 +71,8 @@ def train(
     :param model: An instance of OKF to train.
     :param X: Observations data - list of numpy arrays of shape (n_time_steps, observaton dimension).
     :param Y: System states data - list of numpy arrays of shape (n_time_steps, state dimension).
+    :param R: Uncertainties (from the detector [x_pos, y_pos, z_pos, w_bbox, l_bbox, h_bbox, yaw, vel_x, vel_y])
+            - list of numpy arrays of shape (n_time_steps, observaton dimension).
     :param split_data: Train and validation data (Xt,Yt,Xv,Yv). If None, these are generated from X,Y. Default = None.
     :param p_valid: Percent of data used for validation (if split_data is None). Default = 0.15.
     :param n_epochs: Epochs to train (how many times to sample each trajectory). Default = 1.
@@ -96,8 +99,8 @@ def train(
     """
 
     # pre-processing
-    Xt0, Yt0, Xv, Yv = (
-        split_train_valid(X, Y, p_valid) if split_data is None else split_data
+    Xt0, Yt0, Rt0, Xv, Yv, Rv = (
+        split_train_valid(X, Y, R, p_valid) if split_data is None else split_data
     )
     n_samples = len(Xt0)
     n_batches = n_samples // batch_size
@@ -155,14 +158,16 @@ def train(
             np.random.shuffle(ids)
             Xt = [Xt0[i] for i in ids]
             Yt = [Yt0[i] for i in ids]
+            Rt = [Rt0[i] for i in ids]
 
             for b in range(n_batches):
                 tt = e * n_batches + b
                 x = [Xt[b * batch_size + i] for i in range(batch_size)]
                 y = [Yt[b * batch_size + i] for i in range(batch_size)]
+                r = [Rt[b * batch_size + i] for i in range(batch_size)]
 
                 loss_batch = train_step(
-                    x, y, model, o, loss_after_pred=loss_after_pred, **kwargs
+                    x, y, r, model, o, loss_after_pred=loss_after_pred, **kwargs
                 )
 
                 t.append(tt + 1)
@@ -174,7 +179,7 @@ def train(
                 ):
                     # calculate validation loss
                     loss_batch = test_model(
-                        model, Xv, Yv, detailed=False, loss_after_pred=loss_after_pred
+                        model, Xv, Yv, Rv, detailed=False, loss_after_pred=loss_after_pred
                     )
                     model.train()
 
@@ -295,14 +300,14 @@ def train(
 
     # detailed test over the validation data
     res_valid = test_model(
-        model, Xv, Yv, detailed=True, loss_after_pred=loss_after_pred
+        model, Xv, Yv, Rv, detailed=True, loss_after_pred=loss_after_pred
     ).copy()
 
     return res, res_valid
 
 
 def train_step(
-    X, Y, model, optimizer, clip=1, loss_after_pred=False, optimize_per_target=False
+    X, Y, R, model, optimizer, clip=1, loss_after_pred=False, optimize_per_target=False
 ):
     """
     A single training step - one batch of trajectories.
@@ -321,11 +326,14 @@ def train_step(
 
     optimizer.zero_grad()
     tot_loss = torch.tensor(0.0)
-    for x, y, w in zip(X, Y, targets_weights):
+    for x, y, r, w in zip(X, Y, R, targets_weights):
         model.init_state()
         for t in range(len(x)):
             xx = x[t, :]
             yy = y[t, :]
+            rr = r[t, :]
+            x_pos, y_pos, z_pos, w_bbox, l_bbox, h_bbox, yaw, vel_x, vel_y = rr
+            rr = torch.tensor([x_pos, y_pos, z_pos, w_bbox, l_bbox, h_bbox, vel_x, vel_y, yaw])
 
             loss = None
             model.predict()
@@ -336,7 +344,7 @@ def train_step(
                     else torch.tensor(0.0)
                 )
 
-            model.update(xx)
+            model.update(xx, rr)
             if not loss_after_pred:
                 loss = model.loss_fun(model.x, torch.tensor(yy))
 
@@ -350,15 +358,17 @@ def train_step(
     return tot_loss.item()
 
 
-def split_train_valid(X, Y, p=0.15, seed=9):
+def split_train_valid(X, Y, R, p=0.15, seed=9):
     n_valid = int(np.round(p * len(X)))
     np.random.seed(seed)
     ids_valid = set(list(np.random.choice(np.arange(len(X)), n_valid, replace=False)))
     Xt = [x for i, x in enumerate(X) if i not in ids_valid]
     Yt = [x for i, x in enumerate(Y) if i not in ids_valid]
+    Rt = [x for i, x in enumerate(R) if i not in ids_valid]
     Xv = [x for i, x in enumerate(X) if i in ids_valid]
     Yv = [x for i, x in enumerate(Y) if i in ids_valid]
-    return Xt, Yt, Xv, Yv
+    Rv = [x for i, x in enumerate(R) if i in ids_valid]
+    return Xt, Yt, Rt, Xv, Yv, Rv
 
 
 def print_train_summary(
@@ -382,6 +392,7 @@ def test_model(
     model,
     X,
     Y,
+    R,
     detailed=False,
     loss_fun=None,
     loss_after_pred=False,
@@ -406,18 +417,21 @@ def test_model(
         t0 = time()
         if verbose >= 1:
             print(f"\nTesting {model.model_name:s}:")
-        for tar, (XX, YY) in enumerate(zip(X, Y)):
+        for tar, (XX, YY, RR) in enumerate(zip(X, Y, R)):
             model.init_state()
             for t in range(len(XX)):
                 count += 1
                 x = XX[t, :]
                 y = YY[t, :]
+                r = RR[t, :]
+                x_pos, y_pos, z_pos, w_bbox, l_bbox, h_bbox, yaw, vel_x, vel_y = r
+                r = torch.tensor([x_pos, y_pos, z_pos, w_bbox, l_bbox, h_bbox, vel_x, vel_y, yaw])
 
                 model.predict()
                 if loss_after_pred:
                     loss = loss_fun(model.x, y) if t > 0 else torch.tensor(0.0)
 
-                model.update(x)
+                model.update(x, r)
                 if not loss_after_pred:
                     loss = loss_fun(model.x, y)
 

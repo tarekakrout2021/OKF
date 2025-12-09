@@ -103,7 +103,7 @@ class OKF(nn.Module):
             else P0 * torch.eye(self.dim_x, dtype=torch.double)
         )
         self.Q0 = Q0
-        self.R0 = R0
+        self.R0 = R0 # todo
         self.Q_D, self.Q_L, self.R_D, self.R_L = 4 * [None]
         self.reset_model()
 
@@ -166,8 +166,8 @@ class OKF(nn.Module):
         if self.optimize:
             self.Q_D = nn.Parameter(Q_D, requires_grad=True)
             self.Q_L = nn.Parameter(Q_L, requires_grad=True)
-            self.R_D = nn.Parameter(R_D, requires_grad=True)
-            self.R_L = nn.Parameter(R_L, requires_grad=True)
+            # self.R_D = nn.Parameter(R_D, requires_grad=True)
+            # self.R_L = nn.Parameter(R_L, requires_grad=True)
         else:
             self.Q_D, self.Q_L, self.R_D, self.R_L = Q_D, Q_L, R_D, R_L
 
@@ -178,7 +178,7 @@ class OKF(nn.Module):
             torch.save(self.state_dict(), fpath)
         else:
             # save tensors
-            torch.save((self.Q_D, self.Q_L, self.R_D, self.R_L), fpath)
+            torch.save((self.Q_D, self.Q_L, self.R_D, self.R_L), fpath) # todo
 
     def load_model(self, fname=None, base_path=None, assert_suffices=True):
         fpath = self.get_model_path(fname, base_path, assert_suffices)
@@ -215,7 +215,7 @@ class OKF(nn.Module):
         utils.warpStateYawToPi(self.x)
         self.P = mp(mp(F, self.P), F.T) + Q
 
-    def update(self, z):
+    def update(self, z, r):
         # get observation
         self.z = torch.tensor(z)
         is_x_none = False
@@ -227,7 +227,8 @@ class OKF(nn.Module):
         else:
             H = self.H(self.x) if self.is_H_fun else self.H
         # get update operators
-        R = OKF.get_SPD(self.R_D, self.R_L)
+        # R = OKF.get_SPD(self.R_D, self.R_L) # TODO
+        R = torch.diag(r)
         Ht = H.T
         PHt = mp(self.P, Ht)
         self.S = mp(H, PHt) + R
@@ -317,20 +318,20 @@ class OKF(nn.Module):
         delta = Z - Hx
         for i in range(delta.shape[0]):
             utils.warpResYawToPi(delta[i])
-        R = torch.tensor(np.cov((delta).T))
+        # R = torch.tensor(np.cov((delta).T)) # todo
 
         # Cholesky parameterization
         Q_D, Q_L = OKF.encode_SPD(Q)
-        R_D, R_L = OKF.encode_SPD(R)
+        # R_D, R_L = OKF.encode_SPD(R)
         if self.optimize:
             with torch.no_grad():
                 self.Q_D.copy_(Q_D)
                 self.Q_L.copy_(Q_L)
-                self.R_D.copy_(R_D)
-                self.R_L.copy_(R_L)
+                # self.R_D.copy_(R_D)
+                # self.R_L.copy_(R_L)
         else:
             self.Q_D, self.Q_L = Q_D, Q_L
-            self.R_D, self.R_L = R_D, R_L
+            # self.R_D, self.R_L = R_D, R_L
 
     def get_Q(self, to_numpy=True):
         A = OKF.get_SPD(self.Q_D, self.Q_L)
@@ -342,7 +343,7 @@ class OKF(nn.Module):
         A = OKF.get_SPD(self.R_D, self.R_L)
         if to_numpy:
             A = A.detach().numpy()
-        return A
+        return A #todo
 
     def display_params(self, n_digits=0, fontsize=15, axsize=(4.5, 3.5)):
         axs = utils.Axes(2, 2, axsize=axsize)

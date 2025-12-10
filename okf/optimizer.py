@@ -179,7 +179,12 @@ def train(
                 ):
                     # calculate validation loss
                     loss_batch = test_model(
-                        model, Xv, Yv, Rv, detailed=False, loss_after_pred=loss_after_pred
+                        model,
+                        Xv,
+                        Yv,
+                        Rv,
+                        detailed=False,
+                        loss_after_pred=loss_after_pred,
                     )
                     model.train()
 
@@ -333,7 +338,9 @@ def train_step(
             yy = y[t, :]
             rr = r[t, :]
             x_pos, y_pos, z_pos, w_bbox, l_bbox, h_bbox, yaw, vel_x, vel_y = rr
-            rr = torch.tensor([x_pos, y_pos, z_pos, w_bbox, l_bbox, h_bbox, vel_x, vel_y, yaw])
+            rr = torch.tensor(
+                [x_pos, y_pos, z_pos, w_bbox, l_bbox, h_bbox, vel_x, vel_y, yaw]
+            )
 
             loss = None
             model.predict()
@@ -425,7 +432,9 @@ def test_model(
                 y = YY[t, :]
                 r = RR[t, :]
                 x_pos, y_pos, z_pos, w_bbox, l_bbox, h_bbox, yaw, vel_x, vel_y = r
-                r = torch.tensor([x_pos, y_pos, z_pos, w_bbox, l_bbox, h_bbox, vel_x, vel_y, yaw])
+                r = torch.tensor(
+                    [x_pos, y_pos, z_pos, w_bbox, l_bbox, h_bbox, vel_x, vel_y, yaw]
+                )
 
                 model.predict()
                 if loss_after_pred:

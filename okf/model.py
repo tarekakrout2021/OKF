@@ -103,7 +103,7 @@ class OKF(nn.Module):
             else P0 * torch.eye(self.dim_x, dtype=torch.double)
         )
         self.Q0 = Q0
-        self.R0 = R0 # todo
+        self.R0 = R0  # todo
         self.Q_D, self.Q_L, self.R_D, self.R_L = 4 * [None]
         self.reset_model()
 
@@ -178,7 +178,7 @@ class OKF(nn.Module):
             torch.save(self.state_dict(), fpath)
         else:
             # save tensors
-            torch.save((self.Q_D, self.Q_L, self.R_D, self.R_L), fpath) # todo
+            torch.save((self.Q_D, self.Q_L, self.R_D, self.R_L), fpath)  # todo
 
     def load_model(self, fname=None, base_path=None, assert_suffices=True):
         fpath = self.get_model_path(fname, base_path, assert_suffices)
@@ -343,7 +343,7 @@ class OKF(nn.Module):
         A = OKF.get_SPD(self.R_D, self.R_L)
         if to_numpy:
             A = A.detach().numpy()
-        return A #todo
+        return A  # todo
 
     def display_params(self, n_digits=0, fontsize=15, axsize=(4.5, 3.5)):
         axs = utils.Axes(2, 2, axsize=axsize)

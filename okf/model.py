@@ -166,8 +166,8 @@ class OKF(nn.Module):
         if self.optimize:
             self.Q_D = nn.Parameter(Q_D, requires_grad=True)
             self.Q_L = nn.Parameter(Q_L, requires_grad=True)
-            self.R_D = nn.Parameter(R_D, requires_grad=False) # digonal fixed not trained
-            self.R_L = nn.Parameter(R_L, requires_grad=True)  # lower part trained
+            # self.R_D = nn.Parameter(R_D, requires_grad=True)
+            # self.R_L = nn.Parameter(R_L, requires_grad=True)
         else:
             self.Q_D, self.Q_L, self.R_D, self.R_L = Q_D, Q_L, R_D, R_L
 
@@ -228,27 +228,7 @@ class OKF(nn.Module):
             H = self.H(self.x) if self.is_H_fun else self.H
         # get update operators
         # R = OKF.get_SPD(self.R_D, self.R_L) # TODO
-        if not torch.is_tensor(r):
-            r = torch.tensor(r, dtype=torch.double)
-        else:
-            r = r.to(dtype=torch.double)
-        # make sure shapes match
-        r = r.view(-1)
-        if r.shape[0] != self.dim_z:
-            raise ValueError(f"Expected r of length {self.dim_z}, got {r.shape[0]}")
-        # learned SPD matrix -> correlation-like matrix with unit diagonal
-        if (self.R_D is not None) and (self.R_L is not None):
-            B = OKF.get_SPD(self.R_D, self.R_L)  # SPD
-            d = torch.diag(B)
-            # avoid division by zero
-            d_inv_sqrt = torch.where(d > 0, d.rsqrt(), torch.zeros_like(d))
-            C = B * d_inv_sqrt[:, None] * d_inv_sqrt[None, :]
-        else:
-            C = torch.eye(self.dim_z, dtype=torch.double)
-        s = torch.sqrt(torch.clamp(r, min=1e-12))
-        S = torch.diag(s)
-        R = mp(mp(S, C), S)
-
+        R = torch.diag(r)
         Ht = H.T
         PHt = mp(self.P, Ht)
         self.S = mp(H, PHt) + R
@@ -338,20 +318,20 @@ class OKF(nn.Module):
         delta = Z - Hx
         for i in range(delta.shape[0]):
             utils.warpResYawToPi(delta[i])
-        R = torch.tensor(np.cov((delta).T))
+        # R = torch.tensor(np.cov((delta).T)) # todo
 
         # Cholesky parameterization
         Q_D, Q_L = OKF.encode_SPD(Q)
-        R_D, R_L = OKF.encode_SPD(R)
+        # R_D, R_L = OKF.encode_SPD(R)
         if self.optimize:
             with torch.no_grad():
                 self.Q_D.copy_(Q_D)
                 self.Q_L.copy_(Q_L)
-                self.R_D.copy_(R_D)
-                self.R_L.copy_(R_L)
+                # self.R_D.copy_(R_D)
+                # self.R_L.copy_(R_L)
         else:
             self.Q_D, self.Q_L = Q_D, Q_L
-            self.R_D, self.R_L = R_D, R_L
+            # self.R_D, self.R_L = R_D, R_L
 
     def get_Q(self, to_numpy=True):
         A = OKF.get_SPD(self.Q_D, self.Q_L)

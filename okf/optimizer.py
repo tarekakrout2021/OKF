@@ -23,6 +23,8 @@ from torch import optim
 from . import utils
 
 ###################   TRAIN   ###################
+N_CLIPPED = 0
+N_TOTAL = 0
 
 
 def train_models(models, X, Y, **kwargs):
@@ -45,7 +47,7 @@ def train(
     p_valid=0.15,
     n_epochs=1,
     batch_size=10,
-    lr=3e-4,
+    lr=5e-4,
     lr_decay=0.5,
     lr_decay_freq=150,
     optimizer=optim.Adam,
@@ -343,8 +345,13 @@ def train_step(
             tot_loss = tot_loss + w * loss
 
     tot_loss.backward()
+    global N_TOTAL
+    N_TOTAL += 1
     if clip:
-        torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
+        global N_CLIPPED
+        N_CLIPPED+=1
+        unclipped_grad = torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
+        print(unclipped_grad)
     optimizer.step()
 
     return tot_loss.item()
@@ -364,6 +371,8 @@ def split_train_valid(X, Y, p=0.15, seed=9):
 def print_train_summary(
     n_epochs, n_batches, early_stop, epoch, i_batch, valid_loss, T0, tit
 ):
+    print("N_TOTAL:", N_TOTAL)
+    print("N_CLIPPED:", N_CLIPPED)
     print(f"[{tit:s}] Training done ({time() - T0:.0f} [s])")
     if early_stop:
         print(

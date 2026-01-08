@@ -33,16 +33,16 @@ class EKFMotionModel(ABC):
         """Maps first observation to state"""
         pass
 
-    @staticmethod
-    def initial_p() -> torch.Tensor:
-        pass
-
-    @staticmethod
-    def loss_fun() -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
-        """
-        Should return a callable f(pred, x) -> torch scalar loss.
-        """
-        pass
+    # @staticmethod
+    # def initial_p() -> torch.Tensor:
+    #     pass
+    #
+    # @staticmethod
+    # def loss_fun() -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
+    #     """
+    #     Should return a callable f(pred, x) -> torch scalar loss.
+    #     """
+    #     pass
 
 
 class CTRA(EKFMotionModel):

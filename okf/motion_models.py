@@ -346,7 +346,10 @@ class Bicycle(EKFMotionModel):
                 ]
             )
         else:
-            next_yaw, sin_beta = theta + v / lr * np.sin(beta) * dt, np.sin(beta)
+            next_yaw, sin_beta = (
+                theta + v / lr * np.clip(np.sin(beta), 1e-3, None) * dt,
+                np.clip(np.sin(beta), 1e-3, None),
+            )
             v_yaw, next_v_yaw = beta + theta, beta + next_yaw
             F = torch.tensor(
                 [
@@ -613,7 +616,7 @@ class Bicycle(EKFMotionModel):
                     theta,
                     sigma,
                 ],
-                dtype=torch.float32,
+                dtype=torch.float64,
             )
         else:
             # No velocity: we can only set position, size, heading and assume v=a=sigma=0
@@ -637,7 +640,7 @@ class Bicycle(EKFMotionModel):
                     theta,
                     0.0,
                 ],
-                dtype=torch.float32,
+                dtype=torch.float64,
             )
 
     @staticmethod

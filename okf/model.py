@@ -43,6 +43,7 @@ class OKF(nn.Module):
         x0=None,
         optimize=True,
         model_files_path="models/",
+        train_R=True
     ):
         """
         A model of KF whose parameters (Q,R) are pytorch tensors and can be optimized wrt a loss function.
@@ -99,10 +100,11 @@ class OKF(nn.Module):
         #     P0 = P0 * torch.eye(self.dim_x, dtype=torch.double)
         self.P0 = (
             motion_model.initial_p()
-            if self.motion_model is CTRA
+            if isinstance(self.motion_model, CTRA)
             else P0 * torch.eye(self.dim_x, dtype=torch.double)
         )
         self.Q0 = Q0
+        self.train_R = train_R
         self.R0 = R0  # todo
         self.Q_D, self.Q_L, self.R_D, self.R_L = 4 * [None]
         self.reset_model()
@@ -151,25 +153,29 @@ class OKF(nn.Module):
                 * torch.randn(self.dim_x * (self.dim_x - 1) // 2, dtype=torch.double)
             )
         # R
-        if isinstance(self.R0, torch.Tensor) and len(self.R0.shape):
-            # given as a 2D tensor
-            R_D, R_L = OKF.encode_SPD(self.R0)
-        else:
-            # given as a scale for randomization
-            R_D = (self.R0 * (0.5 + torch.rand(self.dim_z, dtype=torch.double))).log()
-            R_L = (
-                self.R0
-                / 5
-                * torch.randn(self.dim_z * (self.dim_z - 1) // 2, dtype=torch.double)
-            )
+        if self.train_R:
+            if isinstance(self.R0, torch.Tensor) and len(self.R0.shape):
+                # given as a 2D tensor
+                R_D, R_L = OKF.encode_SPD(self.R0)
+            else:
+                # given as a scale for randomization
+                R_D = (self.R0 * (0.5 + torch.rand(self.dim_z, dtype=torch.double))).log()
+                R_L = (
+                    self.R0
+                    / 5
+                    * torch.randn(self.dim_z * (self.dim_z - 1) // 2, dtype=torch.double)
+                )
 
         if self.optimize:
             self.Q_D = nn.Parameter(Q_D, requires_grad=True)
             self.Q_L = nn.Parameter(Q_L, requires_grad=True)
-            # self.R_D = nn.Parameter(R_D, requires_grad=True)
-            # self.R_L = nn.Parameter(R_L, requires_grad=True)
+            if self.train_R:
+                self.R_D = nn.Parameter(R_D, requires_grad=True)
+                self.R_L = nn.Parameter(R_L, requires_grad=True)
         else:
-            self.Q_D, self.Q_L, self.R_D, self.R_L = Q_D, Q_L, R_D, R_L
+            self.Q_D, self.Q_L  = Q_D, Q_L
+            if self.train_R:
+                self.R_D, self.R_L =  R_D, R_L
 
     def save_model(self, fname=None, base_path=None, assert_suffices=True):
         fpath = self.get_model_path(fname, base_path, assert_suffices)
@@ -227,8 +233,10 @@ class OKF(nn.Module):
         else:
             H = self.H(self.x) if self.is_H_fun else self.H
         # get update operators
-        # R = OKF.get_SPD(self.R_D, self.R_L) # TODO
-        R = torch.diag(r)
+        if self.train_R:
+            R = OKF.get_SPD(self.R_D, self.R_L)
+        else:
+            R = torch.diag(r)
         Ht = H.T
         PHt = mp(self.P, Ht)
         self.S = mp(H, PHt) + R
@@ -318,20 +326,24 @@ class OKF(nn.Module):
         delta = Z - Hx
         for i in range(delta.shape[0]):
             utils.warpResYawToPi(delta[i])
-        # R = torch.tensor(np.cov((delta).T)) # todo
 
         # Cholesky parameterization
         Q_D, Q_L = OKF.encode_SPD(Q)
-        # R_D, R_L = OKF.encode_SPD(R)
         if self.optimize:
             with torch.no_grad():
                 self.Q_D.copy_(Q_D)
                 self.Q_L.copy_(Q_L)
-                # self.R_D.copy_(R_D)
-                # self.R_L.copy_(R_L)
+                if self.train_R:
+                    R = torch.tensor(np.cov((delta).T))
+                    R_D, R_L = OKF.encode_SPD(R)
+                    self.R_D.copy_(R_D)
+                    self.R_L.copy_(R_L)
         else:
             self.Q_D, self.Q_L = Q_D, Q_L
-            # self.R_D, self.R_L = R_D, R_L
+            if self.train_R:
+                R = torch.tensor(np.cov((delta).T))
+                R_D, R_L = OKF.encode_SPD(R)
+                self.R_D, self.R_L = R_D, R_L
 
     def get_Q(self, to_numpy=True):
         A = OKF.get_SPD(self.Q_D, self.Q_L)
@@ -340,10 +352,11 @@ class OKF(nn.Module):
         return A
 
     def get_R(self, to_numpy=True):
+        assert self.train_R == True, "R is not trained in this model."
         A = OKF.get_SPD(self.R_D, self.R_L)
         if to_numpy:
             A = A.detach().numpy()
-        return A  # todo
+        return A
 
     def display_params(self, n_digits=0, fontsize=15, axsize=(4.5, 3.5)):
         axs = utils.Axes(2, 2, axsize=axsize)

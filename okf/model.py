@@ -98,7 +98,9 @@ class NoiseStrategy(nn.Module, ABC):
 
     def get_observation_covariance(self, to_numpy: bool = True):
         if not self.has_persistent_r:
-            raise ValueError("This noise strategy does not store a persistent observation covariance.")
+            raise ValueError(
+                "This noise strategy does not store a persistent observation covariance."
+            )
         R = self.observation_covariance()
         return R.detach().numpy() if to_numpy else R
 
@@ -158,7 +160,9 @@ class StaticNoiseStrategy(NoiseStrategy):
     def observation_covariance(self, x=None, z=None, r=None) -> torch.Tensor:
         return OKF.get_SPD(self.R_D, self.R_L)
 
-    def estimate_from_data(self, X, Z, true_fun=None, H=None, is_F_fun=True, is_H_fun=True) -> None:
+    def estimate_from_data(
+        self, X, Z, true_fun=None, H=None, is_F_fun=True, is_H_fun=True
+    ) -> None:
         X1 = torch.cat([torch.tensor(x[:-1], dtype=torch.double) for x in X], dim=0)
         X2 = torch.cat([torch.tensor(x[1:], dtype=torch.double) for x in X], dim=0)
         if is_F_fun:
@@ -178,7 +182,10 @@ class StaticNoiseStrategy(NoiseStrategy):
         else:
             H_blocks = len(X) * [H]
         Hx = np.concatenate(
-            [mp(h, torch.tensor(x, dtype=torch.double).T).T.detach().numpy() for x, h in zip(X, H_blocks)],
+            [
+                mp(h, torch.tensor(x, dtype=torch.double).T).T.detach().numpy()
+                for x, h in zip(X, H_blocks)
+            ],
             axis=0,
         )
         delta = Z_cat - Hx
@@ -239,7 +246,11 @@ class ProvidedRStaticQNoiseStrategy(NoiseStrategy):
             Q_D, Q_L = OKF.encode_SPD(self.Q0.to(dtype=torch.double))
         else:
             Q_D = (self.Q0 * (0.5 + torch.rand(self.dim_x, dtype=torch.double))).log()
-            Q_L = self.Q0 / 5 * torch.randn(self.dim_x * (self.dim_x - 1) // 2, dtype=torch.double)
+            Q_L = (
+                self.Q0
+                / 5
+                * torch.randn(self.dim_x * (self.dim_x - 1) // 2, dtype=torch.double)
+            )
         if self.optimize:
             self.Q_D = nn.Parameter(Q_D, requires_grad=True)
             self.Q_L = nn.Parameter(Q_L, requires_grad=True)
@@ -251,7 +262,9 @@ class ProvidedRStaticQNoiseStrategy(NoiseStrategy):
 
     def observation_covariance(self, x=None, z=None, r=None) -> torch.Tensor:
         if r is None:
-            raise ValueError("Measurement-provided observation noise requires per-step uncertainty 'r'.")
+            raise ValueError(
+                "Measurement-provided observation noise requires per-step uncertainty 'r'."
+            )
         r = _as_double_tensor(r)
         return torch.diag(r)
 
@@ -343,7 +356,11 @@ class NeuralNoiseStrategy(NoiseStrategy):
         source = _as_double_tensor(source)
         feats = []
         for idx in indices:
-            feats.append(source[idx] if idx < source.shape[0] else torch.tensor(0.0, dtype=torch.double))
+            feats.append(
+                source[idx]
+                if idx < source.shape[0]
+                else torch.tensor(0.0, dtype=torch.double)
+            )
         return torch.stack(feats).to(dtype=torch.double)
 
     def _flat_to_spd(self, L_flat: torch.Tensor, dim: int) -> torch.Tensor:
@@ -372,7 +389,9 @@ class NeuralNoiseStrategy(NoiseStrategy):
 
     def get_observation_covariance(self, to_numpy: bool = True):
         if self.fallback_to_provided_r:
-            raise ValueError("Neural strategy uses measurement-provided R at runtime; there is no single persistent R.")
+            raise ValueError(
+                "Neural strategy uses measurement-provided R at runtime; there is no single persistent R."
+            )
         return super().get_observation_covariance(to_numpy=to_numpy)
 
     def save_checkpoint(self, path: str) -> None:
@@ -397,13 +416,23 @@ class NeuralNoiseStrategy(NoiseStrategy):
         state = torch.load(path, map_location="cpu")
         q_hidden = state.get("q_hidden", self.q_net.hidden)
         r_hidden = state.get("r_hidden", self.r_net.hidden)
-        self.q_feature_indices = tuple(state.get("q_feature_indices", self.q_feature_indices))
-        self.r_feature_indices = tuple(state.get("r_feature_indices", self.r_feature_indices))
-        self.fallback_to_provided_r = state.get("fallback_to_provided_r", self.fallback_to_provided_r)
+        self.q_feature_indices = tuple(
+            state.get("q_feature_indices", self.q_feature_indices)
+        )
+        self.r_feature_indices = tuple(
+            state.get("r_feature_indices", self.r_feature_indices)
+        )
+        self.fallback_to_provided_r = state.get(
+            "fallback_to_provided_r", self.fallback_to_provided_r
+        )
         self.q_input_dim = len(self.q_feature_indices)
         self.r_input_dim = len(self.r_feature_indices)
-        self.q_net = CovarianceMLP(self.q_input_dim, self.dim_x, hidden=q_hidden).double()
-        self.r_net = CovarianceMLP(self.r_input_dim, self.dim_z, hidden=r_hidden).double()
+        self.q_net = CovarianceMLP(
+            self.q_input_dim, self.dim_x, hidden=q_hidden
+        ).double()
+        self.r_net = CovarianceMLP(
+            self.r_input_dim, self.dim_z, hidden=r_hidden
+        ).double()
         self.q_net.load_state_dict(state["q_state_dict"])
         self.r_net.load_state_dict(state["r_state_dict"])
 
@@ -459,12 +488,18 @@ class OKF(nn.Module):
             neural_checkpoint_path=neural_checkpoint_path,
         )
         self.z2x = motion_model.initial_observation_to_state
-        self.loss_fun = motion_model.loss_fun() or (lambda pred, x: ((pred - x) ** 2).sum())
+        self.loss_fun = motion_model.loss_fun() or (
+            lambda pred, x: ((pred - x) ** 2).sum()
+        )
 
         if len(self.x0) != self.dim_x:
-            raise ValueError(f"Bad input dimension: len(x0) = {len(self.x0)} != {self.dim_x}.")
+            raise ValueError(
+                f"Bad input dimension: len(x0) = {len(self.x0)} != {self.dim_x}."
+            )
         if self.P0.shape != (self.dim_x, self.dim_x):
-            raise ValueError(f"Bad input dimension: P0.shape = {self.P0.shape} != {(self.dim_x, self.dim_x)}.")
+            raise ValueError(
+                f"Bad input dimension: P0.shape = {self.P0.shape} != {(self.dim_x, self.dim_x)}."
+            )
 
         self.x = None
         self.z = None
@@ -472,12 +507,17 @@ class OKF(nn.Module):
         self.init_state()
         self.K_history = []
 
-
-    def _build_noise_strategy(self, noise_strategy_mode, Q0, R0, neural_checkpoint_path=None) -> NoiseStrategy:
+    def _build_noise_strategy(
+        self, noise_strategy_mode, Q0, R0, neural_checkpoint_path=None
+    ) -> NoiseStrategy:
         if noise_strategy_mode == NoiseStrategyMode.STATIC_LEARNED:
-            return StaticNoiseStrategy(self.dim_x, self.dim_z, optimize=self.optimize, Q0=Q0, R0=R0)
+            return StaticNoiseStrategy(
+                self.dim_x, self.dim_z, optimize=self.optimize, Q0=Q0, R0=R0
+            )
         if noise_strategy_mode == NoiseStrategyMode.STATIC_Q_PROVIDED_R:
-            return ProvidedRStaticQNoiseStrategy(self.dim_x, self.dim_z, optimize=self.optimize, Q0=Q0)
+            return ProvidedRStaticQNoiseStrategy(
+                self.dim_x, self.dim_z, optimize=self.optimize, Q0=Q0
+            )
         if noise_strategy_mode == NoiseStrategyMode.NEURAL:
             return NeuralNoiseStrategy(
                 self.dim_x,
@@ -507,7 +547,9 @@ class OKF(nn.Module):
         if self.optimize:
             self.load_state_dict(torch.load(fpath, map_location="cpu"))
         else:
-            self.noise_strategy.load_exported_state(torch.load(fpath, map_location="cpu"))
+            self.noise_strategy.load_exported_state(
+                torch.load(fpath, map_location="cpu")
+            )
 
     def get_model_path(self, fname=None, base_path=None, assert_suffices=True):
         if base_path is None:
@@ -538,7 +580,11 @@ class OKF(nn.Module):
         self.z = _as_double_tensor(z)
         is_x_none = any(x is None for x in self.x)
         if is_x_none:
-            H = self.H(torch.tensor([0.0] * len(self.x), dtype=torch.double)) if self.is_H_fun else self.H
+            H = (
+                self.H(torch.tensor([0.0] * len(self.x), dtype=torch.double))
+                if self.is_H_fun
+                else self.H
+            )
         else:
             H = self.H(self.x) if self.is_H_fun else self.H
         R = self.noise_strategy.observation_covariance(x=self.x, z=self.z, r=r)
@@ -572,14 +618,21 @@ class OKF(nn.Module):
     @staticmethod
     def encode_SPD(A, eps=1e-6):
         n = A.shape[0]
-        A = torch.linalg.cholesky(A + eps * torch.eye(n, dtype=A.dtype, device=A.device))
+        A = torch.linalg.cholesky(
+            A + eps * torch.eye(n, dtype=A.dtype, device=A.device)
+        )
         D = A.diag().log()
         ids = torch.tril_indices(n, n, -1)
         L = A[ids[0, :], ids[1, :]]
         return D, L
 
     def estimate_noise(self, X, Z):
-        kwargs = dict(true_fun=self.true_fun, H=self.H, is_F_fun=self.is_F_fun, is_H_fun=self.is_H_fun)
+        kwargs = dict(
+            true_fun=self.true_fun,
+            H=self.H,
+            is_F_fun=self.is_F_fun,
+            is_H_fun=self.is_H_fun,
+        )
         self.noise_strategy.estimate_from_data(X, Z, **kwargs)
 
     def get_Q(self, to_numpy=True):

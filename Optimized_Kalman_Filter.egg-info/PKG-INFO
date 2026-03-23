@@ -1,4 +1,4 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: Optimized-Kalman-Filter
 Version: 0.0.9
 Summary: Optimization of a Kalman Filter from data of states and their observations.
@@ -6,12 +6,23 @@ Home-page: https://github.com/ido90/Optimized-Kalman-Filter
 Author: Ido Greenberg
 License: MIT
 Keywords: OKF,Optimized Kalman Filter,Kalman Filter
-Platform: UNKNOWN
 Classifier: License :: OSI Approved :: MIT License
 Classifier: Programming Language :: Python :: 3
 Requires-Python: >=3.5
 Description-Content-Type: text/markdown
 License-File: LICENSE.txt
+Requires-Dist: torch
+Dynamic: author
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: keywords
+Dynamic: license
+Dynamic: license-file
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
 
 # Optimized Kalman Filter
 
@@ -109,5 +120,3 @@ See [`example.ipynb`](https://github.com/ido90/Optimized-Kalman-Filter/blob/mast
   year={2023}
 }
 ```
-
-

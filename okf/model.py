@@ -10,6 +10,7 @@ import numpy as np
 import seaborn as sns
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import matmul as mp
 
 from . import utils
@@ -22,35 +23,143 @@ def _as_double_tensor(x) -> torch.Tensor:
     return torch.tensor(x, dtype=torch.double)
 
 
+def _gaussian_nll_from_cholesky(L: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
+    """
+    L:
+      - (D, D) or
+      - (B, D, D)
+
+    residual:
+      - (D,) or
+      - (B, D)
+
+    returns:
+      - scalar if single sample
+      - (B,) if batched
+    """
+    single = False
+    if L.dim() == 2:
+        L = L.unsqueeze(0)
+        residual = residual.unsqueeze(0)
+        single = True
+
+    y = torch.linalg.solve_triangular(
+        L,
+        residual.unsqueeze(-1),
+        upper=False,
+    ).squeeze(-1)
+    mahal = (y * y).sum(dim=-1)
+    logdet = 2.0 * torch.log(torch.diagonal(L, dim1=-2, dim2=-1)).sum(dim=-1)
+    nll = 0.5 * mahal + 0.5 * logdet
+    return nll.squeeze(0) if single else nll
+
+
+def _covariance_from_cholesky(L: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    if L.dim() == 2:
+        I = eps * torch.eye(L.shape[-1], dtype=L.dtype, device=L.device)
+        return L @ L.T + I
+
+    I = eps * torch.eye(L.shape[-1], dtype=L.dtype, device=L.device).unsqueeze(0)
+    return L @ L.transpose(-1, -2) + I
+
+
 class NoiseStrategyMode(Enum):
     STATIC_LEARNED = "static_learned"
     STATIC_Q_PROVIDED_R = "static_q_provided_r"
     NEURAL = "neural"
 
 
+class CholeskyHead(nn.Module):
+    def __init__(self, target_dim: int, diag_eps: float = 1e-4):
+        super().__init__()
+        self.target_dim = target_dim
+        self.diag_eps = diag_eps
+        self.cholesky_size = target_dim * (target_dim + 1) // 2
+
+    def forward(self, raw: torch.Tensor) -> torch.Tensor:
+        """
+        raw:
+          - (cholesky_size,)
+          - (B, cholesky_size)
+
+        returns:
+          - (target_dim, target_dim)
+          - (B, target_dim, target_dim)
+        """
+        squeeze = False
+        if raw.dim() == 1:
+            raw = raw.unsqueeze(0)
+            squeeze = True
+
+        B = raw.shape[0]
+        L = torch.zeros(
+            (B, self.target_dim, self.target_dim),
+            dtype=raw.dtype,
+            device=raw.device,
+        )
+
+        idx = 0
+        for i in range(self.target_dim):
+            for j in range(i + 1):
+                if i == j:
+                    L[:, i, j] = F.softplus(raw[:, idx]) + self.diag_eps
+                else:
+                    L[:, i, j] = raw[:, idx]
+                idx += 1
+
+        return L.squeeze(0) if squeeze else L
+
+
 class CovarianceMLP(nn.Module):
-    def __init__(self, input_dim: int, target_dim: int, hidden: int = 32):
+    """
+    Backbone MLP + linear output + dedicated Cholesky head.
+
+    forward_raw(x) returns flattened Cholesky parameters.
+    forward(x) returns the lower-triangular Cholesky matrix.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        target_dim: int,
+        hidden: int = 64,
+        activation: str = "silu",
+        diag_eps: float = 1e-4,
+    ):
         super().__init__()
         self.input_dim = input_dim
         self.target_dim = target_dim
         self.hidden = hidden
-        self.fc = nn.Sequential(
+        self.activation = activation
+        self.diag_eps = diag_eps
+
+        act = nn.SiLU if activation.lower() == "silu" else nn.GELU
+
+        self.backbone = nn.Sequential(
             nn.Linear(input_dim, hidden),
-            nn.ReLU(),
+            act(),
+            nn.LayerNorm(hidden),
             nn.Linear(hidden, hidden),
-            nn.ReLU(),
+            act(),
+            nn.LayerNorm(hidden),
+            nn.Linear(hidden, hidden),
+            act(),
         )
+
         self.cholesky_size = target_dim * (target_dim + 1) // 2
         self.out = nn.Linear(hidden, self.cholesky_size)
+        self.cholesky_head = CholeskyHead(target_dim=target_dim, diag_eps=diag_eps)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward_raw(self, x: torch.Tensor) -> torch.Tensor:
+        squeeze = False
         if x.dim() == 1:
             x = x.unsqueeze(0)
             squeeze = True
-        else:
-            squeeze = False
-        y = self.out(self.fc(x))
+        y = self.out(self.backbone(x))
         return y.squeeze(0) if squeeze else y
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.cholesky_head(self.forward_raw(x))
 
 
 class NoiseStrategy(nn.Module, ABC):
@@ -314,7 +423,8 @@ class NeuralNoiseStrategy(NoiseStrategy):
         r_feature_indices: Optional[Sequence[int]] = None,
         fallback_to_provided_r: bool = True,
         checkpoint_path: Optional[str] = None,
-        hidden: int = 32,
+        hidden: int = 64,
+        activation: str = "silu",
     ):
         super().__init__(dim_x=dim_x, dim_z=dim_z, optimize=optimize)
         self.q_feature_indices = tuple(q_feature_indices or self.FEATURE_INDICES)
@@ -322,8 +432,13 @@ class NeuralNoiseStrategy(NoiseStrategy):
         self.fallback_to_provided_r = fallback_to_provided_r
         self.q_input_dim = len(self.q_feature_indices)
         self.r_input_dim = len(self.r_feature_indices)
-        self.q_net = q_net or CovarianceMLP(self.q_input_dim, dim_x, hidden=hidden)
-        self.r_net = r_net or CovarianceMLP(self.r_input_dim, dim_z, hidden=hidden)
+        self.activation = activation
+        self.q_net = q_net or CovarianceMLP(
+            self.q_input_dim, dim_x, hidden=hidden, activation=activation
+        )
+        self.r_net = r_net or CovarianceMLP(
+            self.r_input_dim, dim_z, hidden=hidden, activation=activation
+        )
         self.double()
         if checkpoint_path:
             self.load_checkpoint(checkpoint_path)
@@ -349,6 +464,8 @@ class NeuralNoiseStrategy(NoiseStrategy):
             for layer in module.modules():
                 if isinstance(layer, nn.Linear):
                     layer.reset_parameters()
+                elif isinstance(layer, nn.LayerNorm):
+                    layer.reset_parameters()
 
     def _extract_features(self, source, indices: Sequence[int]) -> torch.Tensor:
         if source is None:
@@ -363,29 +480,35 @@ class NeuralNoiseStrategy(NoiseStrategy):
             )
         return torch.stack(feats).to(dtype=torch.double)
 
-    def _flat_to_spd(self, L_flat: torch.Tensor, dim: int) -> torch.Tensor:
-        L = torch.zeros((dim, dim), dtype=L_flat.dtype, device=L_flat.device)
-        idx = 0
-        for i in range(dim):
-            for j in range(i + 1):
-                if i == j:
-                    L[i, j] = torch.exp(torch.clamp(L_flat[idx], -5.0, 5.0))
-                else:
-                    L[i, j] = L_flat[idx]
-                idx += 1
+    def _to_spd(self, L_or_flat: torch.Tensor, dim: int) -> torch.Tensor:
+        if L_or_flat.dim() == 1:
+            if L_or_flat.numel() != dim * (dim + 1) // 2:
+                raise ValueError(
+                    f"Expected flat Cholesky params of size {dim * (dim + 1) // 2}, "
+                    f"got {L_or_flat.numel()}."
+                )
+            head = CholeskyHead(dim).to(dtype=L_or_flat.dtype, device=L_or_flat.device)
+            L = head(L_or_flat)
+        elif L_or_flat.dim() == 2 and L_or_flat.shape == (dim, dim):
+            L = L_or_flat
+        else:
+            raise ValueError(
+                f"Unsupported covariance representation with shape {tuple(L_or_flat.shape)}."
+            )
+
         eps = 1e-3 * torch.eye(dim, dtype=L.dtype, device=L.device)
         return L @ L.T + eps
 
     def process_covariance(self, x=None, z=None, r=None) -> torch.Tensor:
         feats = self._extract_features(x, self.q_feature_indices)
-        return self._flat_to_spd(self.q_net(feats), self.dim_x)
+        return self._to_spd(self.q_net(feats), self.dim_x)
 
     def observation_covariance(self, x=None, z=None, r=None) -> torch.Tensor:
         if self.fallback_to_provided_r and r is not None:
             return torch.diag(_as_double_tensor(r))
         feats_source = x if x is not None else z
         feats = self._extract_features(feats_source, self.r_feature_indices)
-        return self._flat_to_spd(self.r_net(feats), self.dim_z)
+        return self._to_spd(self.r_net(feats), self.dim_z)
 
     def get_observation_covariance(self, to_numpy: bool = True):
         if self.fallback_to_provided_r:
@@ -408,6 +531,8 @@ class NeuralNoiseStrategy(NoiseStrategy):
                 "fallback_to_provided_r": self.fallback_to_provided_r,
                 "q_hidden": self.q_net.hidden,
                 "r_hidden": self.r_net.hidden,
+                "q_activation": getattr(self.q_net, "activation", "silu"),
+                "r_activation": getattr(self.r_net, "activation", "silu"),
             },
             path,
         )
@@ -416,6 +541,9 @@ class NeuralNoiseStrategy(NoiseStrategy):
         state = torch.load(path, map_location="cpu")
         q_hidden = state.get("q_hidden", self.q_net.hidden)
         r_hidden = state.get("r_hidden", self.r_net.hidden)
+        q_activation = state.get("q_activation", "silu")
+        r_activation = state.get("r_activation", "silu")
+
         self.q_feature_indices = tuple(
             state.get("q_feature_indices", self.q_feature_indices)
         )
@@ -427,12 +555,20 @@ class NeuralNoiseStrategy(NoiseStrategy):
         )
         self.q_input_dim = len(self.q_feature_indices)
         self.r_input_dim = len(self.r_feature_indices)
+
         self.q_net = CovarianceMLP(
-            self.q_input_dim, self.dim_x, hidden=q_hidden
+            self.q_input_dim,
+            self.dim_x,
+            hidden=q_hidden,
+            activation=q_activation,
         ).double()
         self.r_net = CovarianceMLP(
-            self.r_input_dim, self.dim_z, hidden=r_hidden
+            self.r_input_dim,
+            self.dim_z,
+            hidden=r_hidden,
+            activation=r_activation,
         ).double()
+
         self.q_net.load_state_dict(state["q_state_dict"])
         self.r_net.load_state_dict(state["r_state_dict"])
 

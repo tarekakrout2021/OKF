@@ -103,10 +103,12 @@ def train(
         split_train_valid(X, Y, R, p_valid) if split_data is None else split_data
     )
     n_samples = len(Xt0)
-    n_batches = n_samples // batch_size
-    log_interval = log_interval // batch_size
+    if n_samples > 0:
+        batch_size = min(batch_size, n_samples)
+    n_batches = n_samples // batch_size if batch_size > 0 else 0
+    log_interval = log_interval // batch_size if batch_size > 0 else 0
     if lr_decay_freq is None:
-        lr_decay_freq = n_batches
+        lr_decay_freq = max(1, n_batches)
 
     if reset_model:
         model.reset_model()
@@ -119,6 +121,7 @@ def train(
         # initialize variables
         early_stop = False
         no_improvement_seq = 0
+        best_model_saved = False
         e = 0
         b = 0
         # train monitor
@@ -238,6 +241,7 @@ def train(
                             model.save_model(
                                 to_save if isinstance(to_save, str) else None
                             )
+                            best_model_saved = True
                     else:
                         no_improvement_seq += 1
                     if no_improvement_seq >= valid_hor:
@@ -299,7 +303,14 @@ def train(
         if save_best and model.optimize:
             # in this case saving was already done during the training - every time validation loss achieved new record.
             # need to reload the last saved model, which is the best one over all validations.
-            model.load_model(to_save if isinstance(to_save, str) else None)
+            if best_model_saved:
+                model.load_model(to_save if isinstance(to_save, str) else None)
+            else:
+                warn(
+                    "No best checkpoint was saved during training; saving current model instead. "
+                    "This can happen when there are zero optimization batches."
+                )
+                model.save_model(to_save if isinstance(to_save, str) else None)
         else:
             model.save_model(to_save if isinstance(to_save, str) else None)
 
@@ -367,6 +378,8 @@ def train_step(
 
 def split_train_valid(X, Y, R, p=0.15, seed=9):
     n_valid = int(np.round(p * len(X)))
+    if len(X) >= 2:
+        n_valid = min(max(n_valid, 1), len(X) - 1)
     np.random.seed(seed)
     ids_valid = set(list(np.random.choice(np.arange(len(X)), n_valid, replace=False)))
     Xt = [x for i, x in enumerate(X) if i not in ids_valid]
@@ -467,6 +480,11 @@ def test_model(
                     loss=losses,
                 )
             )
+        if count == 0:
+            warn(
+                "test_model() received no samples; returning inf loss to indicate missing evaluation data."
+            )
+            return np.inf
         tot_loss /= count
         return tot_loss
 
